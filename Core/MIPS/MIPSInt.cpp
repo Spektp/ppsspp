@@ -19,6 +19,7 @@
 
 #include <cmath>
 
+#include "Common/Common.h"
 #include "../Core.h"
 #include "MIPS.h"
 #include "MIPSInt.h"
@@ -150,6 +151,10 @@ namespace MIPSInt
 
 		// It appears that a cache line is 0x40 (64) bytes.
 		switch (func) {
+		case 24:
+			// "Create Dirty Exclusive" - for avoiding a cacheline fill before writing to it.
+			// Will cause garbage on the real machine so we just ignore it, the app will overwrite the cacheline.
+			break;
 		case 25:  // Hit Invalidate - zaps the line if present in cache. Should not writeback???? scary.
 			// No need to do anything.
 			break;

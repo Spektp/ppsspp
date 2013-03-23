@@ -20,6 +20,7 @@
 #include "../MIPS/MIPSCodeUtils.h"
 #include "../MIPS/MIPSInt.h"
 
+#include "Common/LogManager.h"
 #include "../FileSystems/FileSystem.h"
 #include "../FileSystems/MetaFileSystem.h"
 #include "../PSPLoaders.h"
@@ -28,7 +29,6 @@
 #include "../../Core/System.h"
 #include "../../GPU/GPUInterface.h"
 #include "../../GPU/GPUState.h"
-
 
 #include "__sceAudio.h"
 #include "sceAtrac.h"
@@ -109,6 +109,7 @@ void __KernelInit()
 	__ImposeInit();
 	__UsbInit();
 	__FontInit();
+	
 	SaveState::Init();  // Must be after IO, as it may create a directory
 
 	// "Internal" PSP libraries
@@ -127,6 +128,7 @@ void __KernelShutdown()
 	}
 	kernelObjects.List();
 	INFO_LOG(HLE, "Shutting down kernel - %i kernel objects alive", kernelObjects.GetCount());
+	hleCurrentThreadName = NULL;
 	kernelObjects.Clear();
 
 	__FontShutdown();
@@ -285,6 +287,13 @@ int sceKernelDcacheInvalidateRange(u32 addr, int size)
 	}
 	return 0;
 }
+
+int sceKernelIcacheInvalidateRange(u32 addr, int size) {
+	DEBUG_LOG(HLE,"sceKernelIcacheInvalidateRange(%08x, %i)", addr, size);
+	// TODO: Make the JIT hash and compare the touched blocks.
+	return 0;
+}
+
 int sceKernelDcacheWritebackAll()
 {
 #ifdef LOG_CACHE
@@ -295,6 +304,7 @@ int sceKernelDcacheWritebackAll()
 	gpu->InvalidateCacheHint(0, -1);
 	return 0;
 }
+
 int sceKernelDcacheWritebackRange(u32 addr, int size)
 {
 #ifdef LOG_CACHE
@@ -441,7 +451,10 @@ void KernelObjectPool::DoState(PointerWrap &p)
 		ERROR_LOG(HLE, "Unable to load state: different kernel object storage.");
 
 	if (p.mode == p.MODE_READ)
+	{
+		hleCurrentThreadName = NULL;
 		kernelObjects.Clear();
+	}
 
 	p.DoArray(occupied, maxCount);
 	for (int i = 0; i < maxCount; ++i)
@@ -536,9 +549,40 @@ int sceKernelReferSystemStatus(u32 statusPtr) {
 	return 0;
 }
 
-int sceKernelReferThreadProfiler(u32 statusPtr) {
-	ERROR_LOG(HLE, "UNIMPL sceKernelReferThreadProfiler(%08x)", statusPtr);
-	// Ignore for now
+struct DebugProfilerRegs {
+	u32 enable;
+	u32 systemck;
+	u32 cpuck;
+	u32 internal;
+	u32 memory;
+	u32 copz;
+	u32 vfpu;
+	u32 sleep;
+	u32 bus_access;
+	u32 uncached_load;
+	u32 uncached_store;
+	u32 cached_load;
+	u32 cached_store;
+	u32 i_miss;
+	u32 d_miss;
+	u32 d_writeback;
+	u32 cop0_inst;
+	u32 fpu_inst;
+	u32 vfpu_inst;
+	u32 local_bus;
+};
+
+u32 sceKernelReferThreadProfiler(u32 statusPtr) {
+	ERROR_LOG(HLE, "FAKE sceKernelReferThreadProfiler()");
+
+	// Can we confirm that the struct above is the right struct?
+	// If so, re-enable this code.
+	//DebugProfilerRegs regs;
+	//memset(&regs, 0, sizeof(regs));
+	// TODO: fill the struct.
+	//if (Memory::IsValidAddress(statusPtr)) {
+	//	Memory::WriteStruct(statusPtr, &regs);
+	//}
 	return 0;
 }
 
@@ -589,8 +633,8 @@ const HLEFunction ThreadManForUser[] =
 	{0x9fa03cd3,WrapI_I<sceKernelDeleteThread>,"sceKernelDeleteThread"},
 	{0xBD123D9E,sceKernelDelaySysClockThread,"sceKernelDelaySysClockThread"},
 	{0x1181E963,sceKernelDelaySysClockThreadCB,"sceKernelDelaySysClockThreadCB"},
-	{0xceadeb47,sceKernelDelayThread,"sceKernelDelayThread"},
-	{0x68da9e36,sceKernelDelayThreadCB,"sceKernelDelayThreadCB"},
+	{0xceadeb47,WrapI_U<sceKernelDelayThread>,"sceKernelDelayThread"},
+	{0x68da9e36,WrapI_U<sceKernelDelayThreadCB>,"sceKernelDelayThreadCB"},
 	{0xaa73c935,sceKernelExitThread,"sceKernelExitThread"},
 	{0x809ce29b,sceKernelExitDeleteThread,"sceKernelExitDeleteThread"},
 	{0x94aa61ee,sceKernelGetThreadCurrentPriority,"sceKernelGetThreadCurrentPriority"},
@@ -623,7 +667,7 @@ const HLEFunction ThreadManForUser[] =
 
 	{0x8218B4DD,WrapI_U<sceKernelReferGlobalProfiler>,"sceKernelReferGlobalProfiler"},
 	{0x627E6F3A,WrapI_U<sceKernelReferSystemStatus>,"sceKernelReferSystemStatus"},
-	{0x64D4540E,WrapI_U<sceKernelReferThreadProfiler>,"sceKernelReferThreadProfiler"},
+	{0x64D4540E,WrapU_U<sceKernelReferThreadProfiler>,"sceKernelReferThreadProfiler"},
 
 	//Fifa Street 2 uses alarms
 	{0x6652b8ca,WrapI_UUU<sceKernelSetAlarm>,"sceKernelSetAlarm"},

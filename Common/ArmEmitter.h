@@ -178,7 +178,7 @@ public:
 		Value = base;
 	}
 
-	Operand2(u8 shift, ShiftType type, ARMReg base)// For IMM shifted register
+	Operand2(ARMReg base, ShiftType type, u8 shift)// For IMM shifted register
 	{
 		if(shift == 32) shift = 0;
 		switch (type)
@@ -320,6 +320,9 @@ bool TryMakeOperand2(u32 imm, Operand2 &op2);
 bool TryMakeOperand2_AllowInverse(u32 imm, Operand2 &op2, bool *inverse);
 bool TryMakeOperand2_AllowNegation(s32 imm, Operand2 &op2, bool *negated);
 
+// Use this only when you know imm can be made into an Operand2.
+Operand2 AssumeMakeOperand2(u32 imm);
+
 inline Operand2 R(ARMReg Reg)	{ return Operand2(Reg, TYPE_REG); }
 inline Operand2 IMM(u32 Imm)	{ return Operand2(Imm, TYPE_IMM); }
 inline Operand2 Mem(void *ptr)	{ return Operand2((u32)ptr, TYPE_IMM); }
@@ -336,7 +339,7 @@ struct FixupBranch
 
 struct LiteralPool
 {
-    int i;
+    s32 loc;
     u8* ldr_address;
     u32 val;
 };
@@ -352,7 +355,7 @@ private:
 	u32 condition;
 	std::vector<LiteralPool> currentLitPool;
 
-	void WriteStoreOp(u32 op, ARMReg dest, ARMReg src, Operand2 op2);
+	void WriteStoreOp(u32 Op, ARMReg Rt, ARMReg Rn, Operand2 op2, bool RegAdd);
 	void WriteRegStoreOp(u32 op, ARMReg dest, bool WriteBack, u16 RegList);
 	void WriteShiftedDataOp(u32 op, bool SetFlags, ARMReg dest, ARMReg src, ARMReg op2);
 	void WriteShiftedDataOp(u32 op, bool SetFlags, ARMReg dest, ARMReg src, Operand2 op2);
@@ -444,6 +447,7 @@ public:
 	void LSL (ARMReg dest, ARMReg src, ARMReg op2);
 	void LSLS(ARMReg dest, ARMReg src, Operand2 op2);
 	void LSLS(ARMReg dest, ARMReg src, ARMReg op2);
+	void LSR (ARMReg dest, ARMReg src, Operand2 op2);
 	void SBC (ARMReg dest, ARMReg src, Operand2 op2);
 	void SBCS(ARMReg dest, ARMReg src, Operand2 op2);
 	void RBIT(ARMReg dest, ARMReg src);
@@ -485,6 +489,7 @@ public:
 	void SXTAH(ARMReg dest, ARMReg src, ARMReg op2, u8 rotation = 0);
 	void BFI(ARMReg rd, ARMReg rn, u8 lsb, u8 width);
 	void UBFX(ARMReg dest, ARMReg op2, u8 lsb, u8 width);
+	void CLZ(ARMReg rd, ARMReg rm);
 
 	// Using just MSR here messes with our defines on the PPC side of stuff (when this code was in dolphin...)
 	// Just need to put an underscore here, bit annoying.
@@ -493,34 +498,22 @@ public:
 	void MRS  (ARMReg dest);
 
 	// Memory load/store operations
-	void LDR  (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void LDRH (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void LDRSH(ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void LDRB (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void LDRSB(ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	// Offset adds to the base register in LDR
-	void LDR  (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void LDRH (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void LDRSH(ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void LDRB (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void LDRSB(ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void LDRLIT(ARMReg dest, u32 offset, bool Add);
-
-	void STR  (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void STRH (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	void STRB (ARMReg dest, ARMReg src, Operand2 op2 = 0);
-	// Offset adds on to the destination register in STR
-	void STR  (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void STRH (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
-	void STRB (ARMReg dest, ARMReg base, ARMReg offset, bool Index, bool Add);
+	void LDR  (ARMReg dest, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void LDRB (ARMReg dest, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void LDRH (ARMReg dest, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void LDRSB(ARMReg dest, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void LDRSH(ARMReg dest, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void STR  (ARMReg result, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void STRB (ARMReg result, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
+	void STRH (ARMReg result, ARMReg base, Operand2 op2 = 0, bool RegAdd = true);
 
 	void STMFD(ARMReg dest, bool WriteBack, const int Regnum, ...);
 	void LDMFD(ARMReg dest, bool WriteBack, const int Regnum, ...);
 	
 	// Exclusive Access operations
 	void LDREX(ARMReg dest, ARMReg base);
-	// dest contains the result if the instruction managed to store the value
-	void STREX(ARMReg dest, ARMReg base, ARMReg op);
+	// result contains the result if the instruction managed to store the value
+	void STREX(ARMReg result, ARMReg base, ARMReg op);
 	void DMB ();
 	void SVC(Operand2 op);
 
@@ -553,9 +546,11 @@ public:
 	void VMLA(ARMReg Vd, ARMReg Vn, ARMReg Vm);
 	void VMOV(ARMReg Dest, ARMReg Src, bool high);
 	void VMOV(ARMReg Dest, ARMReg Src);
-	void VCVT(ARMReg Sd, ARMReg Sm, int flags);
+	void VCVT(ARMReg Dest, ARMReg Src, int flags);
 
 	void VMRS_APSR();
+	void VMRS(ARMReg Rt);
+	void VMSR(ARMReg Rt);
 
 	void QuickCallFunction(ARMReg scratchreg, void *func);
 
@@ -619,7 +614,11 @@ public:
 	// Start over if you need to change the code (call FreeCodeSpace(), AllocCodeSpace()).
 	void WriteProtect()
 	{
-		WriteProtectMemory(region, region_size, true);		
+		WriteProtectMemory(region, region_size, true);
+	}
+	void UnWriteProtect()
+	{
+		UnWriteProtectMemory(region, region_size, false);
 	}
 
 	void ResetCodePtr()

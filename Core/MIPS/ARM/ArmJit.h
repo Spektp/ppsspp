@@ -24,6 +24,10 @@
 #include "ArmRegCacheFPU.h"
 #include "ArmAsm.h"
 
+#if defined(MAEMO)
+#include "stddef.h"
+#endif
+
 namespace MIPSComp
 {
 
@@ -134,6 +138,7 @@ class Jit : public ArmGen::ARMXCodeBlock
 public:
 	Jit(MIPSState *mips);
 	void DoState(PointerWrap &p);
+	static void DoDummyState(PointerWrap &p);
 
 	// Compiled ops should ignore delay slots
 	// the compiler will take care of them by itself
@@ -147,6 +152,7 @@ public:
 
 	void CompileDelaySlot(int flags);
 	void CompileAt(u32 addr);
+	void EatInstruction(u32 op);
 	void Comp_RunBlock(u32 op);
 
 	// Ops
@@ -217,7 +223,10 @@ private:
 
 	// Utilities to reduce duplicated code
 	void CompImmLogic(int rs, int rt, u32 uimm, void (ARMXEmitter::*arith)(ARMReg dst, ARMReg src, Operand2 op2), u32 (*eval)(u32 a, u32 b));
+	void CompType3(int rd, int rs, int rt, void (ARMXEmitter::*arithOp2)(ARMReg dst, ARMReg rm, Operand2 rn), u32 (*eval)(u32 a, u32 b), bool isSub = false);
+
 	void CompShiftImm(u32 op, ArmGen::ShiftType shiftType);
+	void CompShiftVar(u32 op, ArmGen::ShiftType shiftType);
 
 	void LogBlockNumber();
 	
@@ -244,6 +253,7 @@ private:
 
 	// Utils
 	void SetR0ToEffectiveAddress(int rs, s16 offset);
+	void SetCCAndR0ForSafeAddress(int rs, s16 offset, ARMReg tempReg);
 
 	ArmJitBlockCache blocks;
 	ArmJitOptions jo;

@@ -17,6 +17,7 @@
 
 #include "../../MemMap.h"
 #include "../MIPSAnalyst.h"
+#include "Core/Config.h"
 #include "Core/Reporting.h"
 
 #include "ArmJit.h"
@@ -41,7 +42,6 @@
 
 namespace MIPSComp
 {
-
 	// Vector regs can overlap in all sorts of swizzled ways.
 	// This does allow a single overlap in sregs[i].
 	bool IsOverlapSafeAllowS(int dreg, int di, int sn, u8 sregs[], int tn = 0, u8 tregs[] = NULL)
@@ -211,27 +211,59 @@ namespace MIPSComp
 		int vt = ((op >> 16) & 0x1f) | ((op & 3) << 5);
 		int rs = _RS;
 
+		bool doCheck = false;
 		switch (op >> 26)
 		{
 		case 50: //lv.s  // VI(vt) = Memory::Read_U32(addr);
 			{
-				gpr.MapReg(rs);
-				SetR0ToEffectiveAddress(rs, imm);
-				ADD(R0, R0, R11);
+				// CC might be set by slow path below, so load regs first.
 				fpr.MapRegV(vt, MAP_DIRTY | MAP_NOINIT);
 				fpr.ReleaseSpillLocks();
+				if (gpr.IsImm(rs)) {
+					u32 addr = (imm + gpr.GetImm(rs)) & 0x3FFFFFFF;
+					MOVI2R(R0, addr + (u32)Memory::base);
+				} else {
+					gpr.MapReg(rs);
+					if (g_Config.bFastMemory) {
+						SetR0ToEffectiveAddress(rs, imm);
+					} else {
+						SetCCAndR0ForSafeAddress(rs, imm, R1);
+						doCheck = true;
+					}
+					ADD(R0, R0, R11);
+				}
 				VLDR(fpr.V(vt), R0, 0);
+				if (doCheck) {
+					SetCC(CC_EQ);
+					MOVI2R(R0, 0);
+					VMOV(fpr.V(vt), R0);
+					SetCC(CC_AL);
+				}
 			}
 			break;
 
 		case 58: //sv.s   // Memory::Write_U32(VI(vt), addr);
 			{
-				gpr.MapReg(rs);
-				SetR0ToEffectiveAddress(rs, imm);
-				ADD(R0, R0, R11);
+				// CC might be set by slow path below, so load regs first.
 				fpr.MapRegV(vt);
 				fpr.ReleaseSpillLocks();
+				if (gpr.IsImm(rs)) {
+					u32 addr = (imm + gpr.GetImm(rs)) & 0x3FFFFFFF;
+					MOVI2R(R0, addr + (u32)Memory::base);
+				} else {
+					gpr.MapReg(rs);
+					if (g_Config.bFastMemory) {
+						SetR0ToEffectiveAddress(rs, imm);
+					} else {
+						SetCCAndR0ForSafeAddress(rs, imm, R1);
+						doCheck = true;
+					}
+					ADD(R0, R0, R11);
+				}
 				VSTR(fpr.V(vt), R0, 0);
+				if (doCheck) {
+					SetCC(CC_AL);
+				}
 			}
 			break;
 
@@ -249,35 +281,72 @@ namespace MIPSComp
 		int vt = (((op >> 16) & 0x1f)) | ((op&1) << 5);
 		int rs = _RS;
 
+		bool doCheck = false;
 		switch (op >> 26)
 		{
 		case 54: //lv.q
 			{
-				gpr.MapReg(rs);
-				SetR0ToEffectiveAddress(rs, imm);
-				ADD(R0, R0, R11);
-
+				// CC might be set by slow path below, so load regs first.
 				u8 vregs[4];
 				GetVectorRegs(vregs, V_Quad, vt);
 				fpr.MapRegsV(vregs, V_Quad, MAP_DIRTY | MAP_NOINIT);
 				fpr.ReleaseSpillLocks();
+
+				if (gpr.IsImm(rs)) {
+					u32 addr = (imm + gpr.GetImm(rs)) & 0x3FFFFFFF;
+					MOVI2R(R0, addr + (u32)Memory::base);
+				} else {
+					gpr.MapReg(rs);
+					if (g_Config.bFastMemory) {
+						SetR0ToEffectiveAddress(rs, imm);
+					} else {
+						SetCCAndR0ForSafeAddress(rs, imm, R1);
+						doCheck = true;
+					}
+					ADD(R0, R0, R11);
+				}
+
 				for (int i = 0; i < 4; i++)
 					VLDR(fpr.V(vregs[i]), R0, i * 4);
+
+				if (doCheck) {
+					SetCC(CC_EQ);
+					MOVI2R(R0, 0);
+					for (int i = 0; i < 4; i++)
+						VMOV(fpr.V(vregs[i]), R0);
+					SetCC(CC_AL);
+				}
 			}
 			break;
 
 		case 62: //sv.q
 			{
-				gpr.MapReg(rs);
-				SetR0ToEffectiveAddress(rs, imm);
-				ADD(R0, R0, R11);
-
+				// CC might be set by slow path below, so load regs first.
 				u8 vregs[4];
 				GetVectorRegs(vregs, V_Quad, vt);
 				fpr.MapRegsV(vregs, V_Quad, 0);
 				fpr.ReleaseSpillLocks();
+
+				if (gpr.IsImm(rs)) {
+					u32 addr = (imm + gpr.GetImm(rs)) & 0x3FFFFFFF;
+					MOVI2R(R0, addr + (u32)Memory::base);
+				} else {
+					gpr.MapReg(rs);
+					if (g_Config.bFastMemory) {
+						SetR0ToEffectiveAddress(rs, imm);
+					} else {
+						SetCCAndR0ForSafeAddress(rs, imm, R1);
+						doCheck = true;
+					}
+					ADD(R0, R0, R11);
+				}
+
 				for (int i = 0; i < 4; i++)
 					VSTR(fpr.V(vregs[i]), R0, i * 4);
+
+				if (doCheck) {
+					SetCC(CC_AL);
+				}
 			}
 			break;
 
@@ -370,8 +439,8 @@ namespace MIPSComp
 
 	void Jit::Comp_VecDo3(u32 op)
 	{
-		DISABLE;  // Still buggy
-
+		CONDITIONAL_DISABLE;
+		DISABLE;
 		// WARNING: No prefix support!
 		if (js.MayHavePrefix())
 		{
@@ -383,12 +452,6 @@ namespace MIPSComp
 		int vd = _VD;
 		int vs = _VS;
 		int vt = _VT;
-		VectorSize sz = GetVecSize(op);
-
-		u8 sregs[4], tregs[4], dregs[4];
-		GetVectorRegs(sregs, sz, vs);
-		GetVectorRegs(tregs, sz, vt);
-		GetVectorRegs(dregs, sz, vd);
 
 		void (ARMXEmitter::*triop)(ARMReg, ARMReg, ARMReg) = NULL;
 		switch (op >> 26)
@@ -417,30 +480,48 @@ namespace MIPSComp
 			break;
 		}
 
-		if (triop == NULL)
-		{
-			Comp_Generic(op);
-			js.EatPrefix();
-			return;
+		if (!triop) {
+			DISABLE;
 		}
 
+		VectorSize sz = GetVecSize(op);
 		int n = GetNumVectorElements(sz);
-		fpr.MapRegsV(sregs, sz, 0);
-		fpr.MapRegsV(tregs, sz, 0);
 
-		for (int i = 0; i < n; ++i) {
-			fpr.MapReg(TEMP0 + i);
-			(this->*triop)(fpr.R(TEMP0 + i), fpr.V(sregs[i]), fpr.V(tregs[i]));
-			fpr.ReleaseSpillLock(sregs[i]);
-			fpr.ReleaseSpillLock(tregs[i]);
-		}
-		fpr.MapRegsV(dregs, sz, MAP_DIRTY | MAP_NOINIT);
-		// TODO: Can avoid this when no overlap
+		u8 sregs[4], tregs[4], dregs[4];
+		GetVectorRegsPrefixS(sregs, sz, _VS);
+		GetVectorRegsPrefixT(tregs, sz, _VT);
+		GetVectorRegsPrefixD(dregs, sz, _VD);
+
+		MIPSReg tempregs[4];
 		for (int i = 0; i < n; i++) {
-			VMOV(fpr.V(dregs[i]), fpr.R(TEMP0 + i));
+			if (!IsOverlapSafeAllowS(dregs[i], i, n, sregs, n, tregs)) {
+				tempregs[i] = fpr.GetTempV();
+			} else {
+				fpr.MapRegV(dregs[i], (dregs[i] == sregs[i] || dregs[i] == tregs[i] ? 0 : MAP_NOINIT) | MAP_DIRTY);
+				tempregs[i] = dregs[i];
+			}
 		}
-		fpr.ReleaseSpillLocks();
 
+		for (int i = 0; i < n; i++) {
+			fpr.SpillLockV(sregs[i]);
+			fpr.SpillLockV(tregs[i]);
+			fpr.MapRegV(sregs[i]);
+			fpr.MapRegV(tregs[i]);
+			fpr.MapRegV(tempregs[i]);
+			(this->*triop)(fpr.V(tempregs[i]), fpr.V(sregs[i]), fpr.V(tregs[i]));
+			fpr.ReleaseSpillLockV(sregs[i]);
+			fpr.ReleaseSpillLockV(tregs[i]);
+		}
+
+		fpr.MapRegsV(dregs, sz, MAP_DIRTY);
+		for (int i = 0; i < n; i++) {
+			if (dregs[i] != tempregs[i])
+				VMOV(fpr.V(dregs[i]), fpr.V(tempregs[i]));
+		}
+		ApplyPrefixD(dregs, sz);
+		
+		fpr.ReleaseSpillLocks();
+		
 		js.EatPrefix();
 	}
 
